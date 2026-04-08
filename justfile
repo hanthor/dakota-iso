@@ -49,26 +49,19 @@ iso-sd-boot target:
     # path like "output" as a named volume instead of a host directory.
     OUTPUT_DIR=$(realpath "{{output_dir}}")
 
-    # Remove any root-owned stale buildah temp dirs from /var/tmp that would
-    # block rootless podman (created by prior sudo/failed builds). CI runners
-    # won't have these; this is a local SELinux-enforcing host safeguard.
-    for d in /var/tmp/buildah[0-9]*; do
-        [ -e "$d" ] || continue
-        owner=$(stat -c '%U' "$d" 2>/dev/null || echo "unknown")
-        if [ "$owner" != "$(id -un)" ]; then
-            echo "Removing stale root-owned buildah dir: $d"
-            sudo rm -rf "$d" || true
-        fi
-    done
+    # Redirect podman/buildah temp dir to a user-owned location so it never
+    # scans /var/tmp (which contains root-owned systemd-private-* dirs on
+    # SELinux-enforcing hosts that cause EPERM).  CI runners use /tmp by default
+    # and won't have stale dirs, so this is a safe cross-env override.
+    PODMAN_TMPDIR="${HOME}/.local/share/containers/tmp"
+    mkdir -p "${PODMAN_TMPDIR}"
+    export TMPDIR="${PODMAN_TMPDIR}"
 
     # Export a clean merged rootfs from the installer image.
-    # Write to $HOME so the temp file stays on the same filesystem (avoids
-    # cross-device rename issues). Requires image_copy_tmp_dir in containers.conf
-    # to point away from /var/tmp on SELinux-enforcing hosts (see README).
     echo "Exporting rootfs from localhost/{{target}}-installer..."
     ROOTFS_TAR="${HOME}/{{target}}-rootfs.tar"
-    CID=$(podman create localhost/{{target}}-installer /bin/true)
-    podman export "${CID}" -o "${ROOTFS_TAR}"
+    CID=$(TMPDIR="${PODMAN_TMPDIR}" podman create localhost/{{target}}-installer /bin/true)
+    TMPDIR="${PODMAN_TMPDIR}" podman export "${CID}" -o "${ROOTFS_TAR}"
     podman rm "${CID}" >/dev/null
 
     # Run the Debian ISO builder against the exported rootfs tarball
