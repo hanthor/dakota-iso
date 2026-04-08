@@ -172,7 +172,7 @@ boot-iso-serial target:
         output/{{target}}-live.iso \
         output/bootiso/install.iso \
         output/bootc-{{target}}*.iso \
-        2>/dev/null | head -1)
+        2>/dev/null | head -1 || true)
     if [[ -z "$ISO" ]]; then
         echo "No ISO found for '{{target}}' — run: just iso-sd-boot {{target}}" >&2
         exit 1
