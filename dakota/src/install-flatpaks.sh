@@ -32,6 +32,11 @@ rm /tmp/tuna-installer.flatpak
 flatpak override --system --filesystem=/etc:ro org.bootcinstaller.Installer
 
 # ── Reconcile Flathub apps against the wanted list ───────────────────────────
+# In debug mode, skip the full Flathub app list to keep builds fast.
+if [[ "${DEBUG:-0}" == "1" ]]; then
+    echo "DEBUG mode: skipping Flathub app list (installer-only ISO)"
+    exit 0
+fi
 
 readarray -t WANTED < <(grep -v '^[[:space:]]*#' /tmp/flatpaks-list | grep -v '^[[:space:]]*$')
 
