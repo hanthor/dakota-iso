@@ -10,6 +10,11 @@ output_dir := "output"
 # Never use debug=1 for production/release ISOs.
 debug := "0"
 
+# Set to "dev" to pull the tuna-installer dev build (continuous-dev release).
+# Useful for testing PRs on the dev branch before they land in a stable release.
+# Example: just installer_channel=dev iso-sd-boot dakota
+installer_channel := "stable"
+
 # Helper: returns "--bootc-installer-payload-ref <ref>" or "" if no payload_ref file
 _payload_ref_flag target:
     @if [ -f "{{target}}/payload_ref" ]; then echo "--bootc-installer-payload-ref $(cat '{{target}}/payload_ref' | tr -d '[:space:]')"; fi
@@ -18,6 +23,7 @@ container target:
     podman build --cap-add sys_admin --security-opt label=disable \
         --layers \
         --build-arg DEBUG={{debug}} \
+        --build-arg INSTALLER_CHANNEL={{installer_channel}} \
         -t {{target}}-installer ./{{target}}
 
 # Build the Debian-based ISO assembly container for the given target.

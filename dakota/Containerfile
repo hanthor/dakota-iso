@@ -49,6 +49,13 @@ FROM ghcr.io/projectbluefin/dakota:latest
 ARG DEBUG=0
 ENV DEBUG=${DEBUG}
 
+# Set to "dev" to pull the tuna-installer dev build (continuous-dev release)
+# instead of the stable continuous build.  Useful for testing PRs on the dev
+# branch before they land in a stable release.
+# Example: just installer_channel=dev iso-sd-boot dakota
+ARG INSTALLER_CHANNEL=stable
+ENV INSTALLER_CHANNEL=${INSTALLER_CHANNEL}
+
 # Replace the OCI-mode initramfs with the dmsquash-live initramfs from stage 2
 COPY --from=initramfs-builder /tmp/initramfs.img /tmp/initramfs.img
 RUN kernel=$(ls /usr/lib/modules | sort -V | tail -1) && \

@@ -22,8 +22,13 @@ flatpak remote-add --system --if-not-exists flathub \
     https://dl.flathub.org/repo/flathub.flatpakrepo
 
 # bootc-installer bundle
+# INSTALLER_CHANNEL controls which release tag to pull from:
+#   stable (default) → continuous   (latest stable build from main/prod)
+#   dev              → continuous-dev (latest dev build, tracks dev branch)
+RELEASE_TAG="continuous"
+[[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]] && RELEASE_TAG="continuous-dev"
 curl --retry 3 --location \
-    https://github.com/tuna-os/tuna-installer/releases/download/continuous/org.bootcinstaller.Installer.flatpak \
+    "https://github.com/tuna-os/tuna-installer/releases/download/${RELEASE_TAG}/org.bootcinstaller.Installer.flatpak" \
     -o /tmp/tuna-installer.flatpak
 flatpak install --system --noninteractive --bundle /tmp/tuna-installer.flatpak || \
     flatpak update --system --noninteractive org.bootcinstaller.Installer
