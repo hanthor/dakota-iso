@@ -54,13 +54,39 @@ iso-sd-boot target:
     # root-owned systemd-private-* dirs.
     SQUASHFS="${OUTPUT_DIR}/{{target}}-rootfs.sfs"
     BOOT_TAR="${OUTPUT_DIR}/{{target}}-boot-files.tar"
-    trap "rm -f '${SQUASHFS}' '${BOOT_TAR}'" EXIT
+    trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'" EXIT
     echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
     podman unshare bash -c "
         set -euo pipefail
         MOUNT=\$(podman image mount localhost/{{target}}-installer)
-        # Build squashfs directly from overlay — preserves correct UIDs (uid 0 = root)
         PATH=/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH
+
+        # Embed the Dakota OCI image into the squashfs containers-storage so that
+        # bootc install can run fully offline from the live ISO.  We use an
+        # oci-archive intermediate to decouple source and destination storage configs.
+        PAYLOAD_OCI='${OUTPUT_DIR}/{{target}}-payload.oci.tar'
+        SQUASHFS_STORAGE=\"\${MOUNT}/var/lib/containers/storage\"
+        LIVE_RUNROOT=\"\$(mktemp -d /tmp/live-runroot-XXXXXX)\"
+        STORAGE_CONF=\"\$(mktemp /tmp/live-storage-XXXXXX.conf)\"
+        mkdir -p \"\${SQUASHFS_STORAGE}\"
+        printf '[storage]\ndriver = \"vfs\"\nrunroot = \"%s\"\ngraphroot = \"%s\"\n' \
+            \"\${LIVE_RUNROOT}\" \"\${SQUASHFS_STORAGE}\" > \"\${STORAGE_CONF}\"
+
+        echo 'Exporting Dakota OCI image to archive...'
+        skopeo copy \
+            containers-storage:ghcr.io/projectbluefin/dakota:latest \
+            oci-archive:\${PAYLOAD_OCI}:ghcr.io/projectbluefin/dakota:latest
+
+        echo 'Importing Dakota OCI image into squashfs containers-storage...'
+        CONTAINERS_STORAGE_CONF=\"\${STORAGE_CONF}\" \
+        skopeo copy \
+            oci-archive:\${PAYLOAD_OCI}:ghcr.io/projectbluefin/dakota:latest \
+            containers-storage:ghcr.io/projectbluefin/dakota:latest
+
+        rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
+        rm -rf \"\${LIVE_RUNROOT}\"
+
+        # Build squashfs directly from overlay — preserves correct UIDs (uid 0 = root)
         mksquashfs \"\$MOUNT\" '${SQUASHFS}' \
             -noappend -comp zstd -Xcompression-level 3 \
             -e proc -e sys -e dev -e run -e tmp
