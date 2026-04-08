@@ -50,17 +50,14 @@ iso-sd-boot target:
     OUTPUT_DIR=$(realpath "{{output_dir}}")
 
     # Export a clean merged rootfs from the installer image.
-    # On SELinux-enforcing hosts, rootless podman can't set container_file_t
-    # labels on /var/tmp. Pass a minimal containers.conf with label=false
-    # to suppress labeling for this operation only.
+    # Write to $HOME so the temp file stays on the same filesystem (avoids
+    # cross-device rename issues). Requires image_copy_tmp_dir in containers.conf
+    # to point away from /var/tmp on SELinux-enforcing hosts (see README).
     echo "Exporting rootfs from localhost/{{target}}-installer..."
     ROOTFS_TAR="${HOME}/{{target}}-rootfs.tar"
-    _CONF=$(mktemp /tmp/containers-XXXXXX.conf)
-    printf '[containers]\nlabel=false\n' > "${_CONF}"
-    CID=$(CONTAINERS_CONF="${_CONF}" podman create localhost/{{target}}-installer /bin/true)
-    CONTAINERS_CONF="${_CONF}" podman export "${CID}" -o "${ROOTFS_TAR}"
-    CONTAINERS_CONF="${_CONF}" podman rm "${CID}" >/dev/null
-    rm -f "${_CONF}"
+    CID=$(podman create localhost/{{target}}-installer /bin/true)
+    podman export "${CID}" -o "${ROOTFS_TAR}"
+    podman rm "${CID}" >/dev/null
 
     # Run the Debian ISO builder against the exported rootfs tarball
     podman run --rm --privileged \
