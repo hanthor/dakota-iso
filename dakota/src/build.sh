@@ -48,6 +48,17 @@ mkdir -p /home/liveuser/.config
 touch /home/liveuser/.config/gnome-initial-setup-done
 chown -R liveuser:liveuser /home/liveuser/.config
 
+# Suppress the GNOME Tour / "Welcome to Bluefin" dialog on first login.
+# GNOME Shell shows it whenever welcome-dialog-last-shown-version < current
+# shell version.  Setting it to 999 via a system dconf policy ensures it is
+# never shown in the live session for any user.
+mkdir -p /etc/dconf/db/local.d
+cat > /etc/dconf/db/local.d/00-live-iso << 'DCONFEOF'
+[org/gnome/shell]
+welcome-dialog-last-shown-version='999'
+DCONFEOF
+dconf update
+
 # ── GDM autologin ─────────────────────────────────────────────────────────────
 mkdir -p /etc/gdm
 cat > /etc/gdm/custom.conf << 'GDMEOF'
