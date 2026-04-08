@@ -6,12 +6,8 @@
 #
 # At this point the initramfs has already been replaced (by the Debian
 # initramfs-builder stage) with a dmsquash-live capable one.  This script
-# only handles the runtime live-environment: user, GDM autologin, and
-# the tuna-installer configuration + autostart.
-#
-# Flatpak pre-installation is intentionally omitted from the initial build
-# to keep the ISO small and validate the boot path first.  Re-enable by
-# uncommenting the flatpak section below once GDM/gnome-shell start cleanly.
+# handles the runtime live-environment: user, GDM autologin, tuna-installer
+# configuration + autostart, and Flatpak pre-installation.
 
 set -exo pipefail
 
@@ -63,6 +59,9 @@ WantedBy=local-fs.target
 UNITEOF
 systemctl enable var-tmp.mount
 
+# ── Dakota icon ───────────────────────────────────────────────────────────────
+install -Dm644 "$SCRIPT_DIR/dakota.png" /usr/share/pixmaps/dakota.png
+
 # ── Tuna-installer configuration ──────────────────────────────────────────────
 mkdir -p /etc/tuna-installer
 cp "$SCRIPT_DIR/etc/tuna-installer/images.json" /etc/tuna-installer/images.json
@@ -74,15 +73,33 @@ cat > /etc/xdg/autostart/tuna-installer.desktop << 'DTEOF'
 [Desktop Entry]
 Name=Dakota Installer
 Exec=flatpak run org.bootcinstaller.Installer
+Icon=/usr/share/pixmaps/dakota.png
 Type=Application
 X-GNOME-Autostart-enabled=true
 DTEOF
 
-# ── Flatpak pre-installation (optional — deferred until boot is validated) ────
-# Uncomment to pre-install tuna-installer + Bluefin system flatpaks.
-# Requires network access at build time and adds ~1-3 GB to the ISO.
+# ── Flatpak pre-installation ──────────────────────────────────────────────────
+# Install tuna-installer + Bluefin system flatpaks into the live squashfs.
+# Requires network at build time; adds ~1-3 GB to the ISO.
 #
-# mkdir -p /etc/flatpak/remotes.d
-# curl --retry 3 -Lo /etc/flatpak/remotes.d/flathub.flatpakrepo \
-#     https://dl.flathub.org/repo/flathub.flatpakrepo
-# xargs flatpak install -y --noninteractive --system < "$SCRIPT_DIR/flatpaks"
+# flatpak system installs talk to flatpak-system-helper via D-Bus, so we start
+# the system bus first.  CAP_SYS_ADMIN (granted by `just container`) allows
+# dbus-daemon to create its socket under /run/dbus.
+mkdir -p /run/dbus
+dbus-daemon --system --fork --nopidfile
+sleep 1
+
+flatpak remote-add --system --if-not-exists flathub \
+    https://dl.flathub.org/repo/flathub.flatpakrepo
+
+# tuna-installer: bundle from GitHub Releases per README install instructions
+# (not yet on Flathub — see https://github.com/tuna-os/tuna-installer#installing)
+curl --retry 3 --location \
+    https://github.com/tuna-os/tuna-installer/releases/download/continuous/org.bootcinstaller.Installer.flatpak \
+    -o /tmp/tuna-installer.flatpak
+flatpak install --system --noninteractive --bundle /tmp/tuna-installer.flatpak
+rm /tmp/tuna-installer.flatpak
+
+# Remaining Bluefin system flatpaks from Flathub
+readarray -t FLATPAKS < <(grep -v '^[[:space:]]*#' "$SCRIPT_DIR/flatpaks" | grep -v '^[[:space:]]*$')
+flatpak install --system --noninteractive --or-update flathub "${FLATPAKS[@]}"
