@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      packages: write
+      packages: read
       pull-requests: write
 
     steps:
@@ -44,9 +44,16 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
+      - name: Restore flatpak build cache
+        uses: actions/cache@v4
+        with:
+          path: /var/lib/containers/cache
+          key: flatpak-cache-${{ hashFiles('dakota/src/flatpaks') }}
+          restore-keys: flatpak-cache-
+
       - name: Build Live ISO
         run: |
-          sudo WRITE_CACHE=1 just output_dir=output iso-sd-boot dakota
+          sudo just output_dir=output iso-sd-boot dakota
 
       - name: Compute ISO name
         id: iso

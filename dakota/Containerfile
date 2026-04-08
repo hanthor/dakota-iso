@@ -55,13 +55,14 @@ RUN kernel=$(ls /usr/lib/modules | sort -V | tail -1) && \
     mv /tmp/initramfs.img "/usr/lib/modules/${kernel}/initramfs.img" && \
     echo "Replaced initramfs for kernel ${kernel}"
 
-# ── Flatpak install layer (cached) ───────────────────────────────────────────
-# COPY the flatpaks list and install script so their content is the cache key.
-# This layer is only re-run when the flatpaks list or install script changes;
-# all other src/ edits skip straight to the configure layer below.
+# ── Flatpak install layer ─────────────────────────────────────────────────────
+# --mount=type=cache persists /var/lib/flatpak across builds locally.
+# Each run reconciles the repo to match src/flatpaks: installs/updates what's
+# new, removes what's been dropped.  Only deltas are downloaded on rebuilds.
 COPY src/flatpaks /tmp/flatpaks-list
-COPY src/install-flatpaks.sh /tmp/install-flatpaks.sh
-RUN chmod +x /tmp/install-flatpaks.sh && /tmp/install-flatpaks.sh
+RUN --mount=type=cache,id=flatpak-system,sharing=locked,target=/var/lib/flatpak \
+    --mount=type=bind,source=src,target=/src \
+    /src/install-flatpaks.sh
 
 # ── Live-environment configure layer (always fresh) ──────────────────────────
 # COPY all of src/ so any change to config files busts this layer's cache.

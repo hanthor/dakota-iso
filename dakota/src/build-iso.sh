@@ -81,7 +81,7 @@ cp "${INITRD}"  "${ESP_STAGING}/images/pxeboot/initrd.img"
 
 cat > "${ESP_STAGING}/loader/loader.conf" << 'EOF'
 timeout 5
-default @saved
+default dakota-live.conf
 EOF
 
 # Kernel cmdline for dmsquash-live live boot:
@@ -137,21 +137,22 @@ mksquashfs "${ROOTFS}" "${ISO_ROOT}/LiveOS/squashfs.img" \
 echo ">>> Squashfs: $(du -sh "${ISO_ROOT}/LiveOS/squashfs.img" | cut -f1)"
 
 # ── Assemble the ISO with xorriso ────────────────────────────────────────────
-# El Torito EFI entry points to EFI/efi.img (a FAT filesystem image, required).
-# -efi-boot-part --efi-boot-image also exposes the FAT image as a GPT ESP
-# partition, making the ISO hybrid-bootable when written to USB with dd.
 echo ">>> Assembling ISO..."
-xorriso -as mkisofs \
-    -iso-level 3 \
-    -r \
-    -V "${LABEL}" \
-    -eltorito-alt-boot \
-    -e EFI/efi.img \
-    -no-emul-boot \
-    -efi-boot-part \
-    --efi-boot-image \
-    -o "${OUTPUT_ISO}" \
-    "${ISO_ROOT}"
+# Native xorriso mode (-dev) with a pre-created file avoids both the DVD-R
+# ~1.7 GiB media cap (which affects -outdev on blank files) and the El Torito
+# catalog structure issues from -as mkisofs -eltorito-alt-boot (which creates
+# an alternate section without a primary entry, confusing some UEFI firmware).
+# -boot_image any platform_id=0xef creates a proper EFI primary boot section.
+touch "${OUTPUT_ISO}"
+xorriso \
+    -dev "stdio:${OUTPUT_ISO}" \
+    -volid "${LABEL}" \
+    -rockridge on \
+    -joliet on \
+    -map "${ISO_ROOT}" / \
+    -boot_image any efi_path=EFI/efi.img \
+    -boot_image any platform_id=0xef \
+    -commit
 
 implantisomd5 "${OUTPUT_ISO}" 2>/dev/null || true
 

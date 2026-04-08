@@ -51,6 +51,18 @@ if [[ "${DEBUG:-0}" == "1" ]]; then
 PermitEmptyPasswords no
 PasswordAuthentication yes
 SSHEOF
+
+    # Open SSH through firewalld so port 22 is reachable from the host
+    mkdir -p /etc/firewalld/zones
+    cat > /etc/firewalld/zones/public.xml << 'FWEOF'
+<?xml version="1.0" encoding="utf-8"?>
+<zone>
+  <short>Public</short>
+  <service name="ssh"/>
+  <service name="mdns"/>
+  <service name="dhcpv6-client"/>
+</zone>
+FWEOF
 fi
 
 # Skip gnome-initial-setup in the live session so GNOME Shell starts directly

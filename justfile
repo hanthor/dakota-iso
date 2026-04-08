@@ -10,26 +10,13 @@ output_dir := "output"
 # Never use debug=1 for production/release ISOs.
 debug := "0"
 
-# OCI reference used for Podman layer cache.
-# Local builds pull the cache (read-only); CI also pushes it (WRITE_CACHE=1).
-cache_ref := "ghcr.io/hanthor/dakota-iso:buildcache"
-
 # Helper: returns "--bootc-installer-payload-ref <ref>" or "" if no payload_ref file
 _payload_ref_flag target:
     @if [ -f "{{target}}/payload_ref" ]; then echo "--bootc-installer-payload-ref $(cat '{{target}}/payload_ref' | tr -d '[:space:]')"; fi
 
 container target:
-    #!/usr/bin/bash
-    set -euo pipefail
-    # Always attempt to pull the layer cache from the registry (read-only, fails
-    # gracefully if the image doesn't exist yet).  CI sets WRITE_CACHE=1 to also
-    # push updated layers after a successful build.
-    cache_args=(--layers --cache-from {{cache_ref}})
-    if [[ "${WRITE_CACHE:-0}" == "1" ]]; then
-        cache_args+=(--cache-to {{cache_ref}})
-    fi
     podman build --cap-add sys_admin --security-opt label=disable \
-        "${cache_args[@]}" \
+        --layers \
         --build-arg DEBUG={{debug}} \
         -t {{target}}-installer ./{{target}}
 
@@ -55,27 +42,30 @@ iso-builder target:
 iso-sd-boot target:
     #!/usr/bin/bash
     set -euo pipefail
-    just container {{target}}
+    just debug={{debug}} container {{target}}
     just iso-builder {{target}}
     mkdir -p {{output_dir}}
+    # Resolve to absolute path so Podman volume mount doesn't treat a relative
+    # path like "output" as a named volume instead of a host directory.
+    OUTPUT_DIR=$(realpath "{{output_dir}}")
 
     # Export a clean merged rootfs from the installer image.
     # podman export gives the fully merged OCI layers as a flat tar.
     echo "Exporting rootfs from localhost/{{target}}-installer..."
     CID=$(podman create localhost/{{target}}-installer /bin/true)
-    podman export "${CID}" -o {{output_dir}}/{{target}}-rootfs.tar
+    podman export "${CID}" -o "${OUTPUT_DIR}/{{target}}-rootfs.tar"
     podman rm "${CID}" >/dev/null
 
     # Run the Debian ISO builder against the exported rootfs tarball
     podman run --rm --privileged \
-        -v "{{output_dir}}:/output:Z" \
+        -v "${OUTPUT_DIR}:/output:Z" \
         localhost/{{target}}-iso-builder \
         /output/{{target}}-rootfs.tar \
         /output/{{target}}-live.iso
 
     # Clean up the intermediate rootfs tarball
-    rm -f {{output_dir}}/{{target}}-rootfs.tar
-    echo "ISO ready: {{output_dir}}/{{target}}-live.iso"
+    rm -f "${OUTPUT_DIR}/{{target}}-rootfs.tar"
+    echo "ISO ready: ${OUTPUT_DIR}/{{target}}-live.iso"
 
 iso target:
     {{image-builder}} build --bootc-ref localhost/{{target}}-installer --bootc-default-fs ext4 `just _payload_ref_flag {{target}}` bootc-generic-iso
@@ -230,14 +220,19 @@ boot-iso-serial target:
     trap "rm -f ${OVMF_VARS}" EXIT
 
     echo "Booting ${ISO} via UEFI — serial console below (Ctrl-A X to quit)"
-    qemu-system-x86_64 \
+    echo "SSH available on localhost:2222 (user: liveuser, password: live) if built with debug=1"
+    sudo /usr/libexec/qemu-kvm \
+        -machine q35 \
         -m 4096 \
         -accel kvm \
         -cpu host \
         -smp 4 \
         -drive if=pflash,format=raw,readonly=on,file="${OVMF_CODE}" \
         -drive if=pflash,format=raw,file="${OVMF_VARS}" \
-        -cdrom "${ISO}" \
-        -display none \
+        -drive if=none,id=live-disk,file="${ISO}",media=cdrom,format=raw,readonly=on \
+        -device virtio-scsi-pci,id=scsi \
+        -device scsi-cd,drive=live-disk \
+        -net nic,model=virtio -net user,hostfwd=tcp::2222-:22 \
         -serial mon:stdio \
+        -display none \
         -no-reboot
