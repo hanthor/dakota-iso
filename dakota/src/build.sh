@@ -26,7 +26,16 @@ fi
 # GNOME OS has no livesys-scripts; create a passwordless live user manually.
 useradd --create-home --uid 1000 --user-group \
     --comment "Live User" liveuser || true
-passwd --delete liveuser
+echo "liveuser:live" | chpasswd
+
+# Enable SSH so the live session is debuggable
+systemctl enable sshd
+# Allow password auth and root-less sudo for liveuser
+cat >> /etc/ssh/sshd_config << 'SSHEOF'
+PermitEmptyPasswords no
+PasswordAuthentication yes
+SSHEOF
+echo "liveuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/liveuser
 
 # Skip gnome-initial-setup in the live session so GNOME Shell starts directly
 mkdir -p /home/liveuser/.config
@@ -107,6 +116,10 @@ curl --retry 3 --location \
     -o /tmp/tuna-installer.flatpak
 flatpak install --system --noninteractive --bundle /tmp/tuna-installer.flatpak
 rm /tmp/tuna-installer.flatpak
+
+# Grant the installer access to /etc so it can read our branding overrides.
+# The bundle may not ship with filesystem=host; override ensures it works.
+flatpak override --system --filesystem=/etc:ro org.bootcinstaller.Installer
 
 # Remaining Bluefin system flatpaks from Flathub
 readarray -t FLATPAKS < <(grep -v '^[[:space:]]*#' "$SCRIPT_DIR/flatpaks" | grep -v '^[[:space:]]*$')
