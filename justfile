@@ -69,7 +69,8 @@ iso-sd-boot target:
     SQUASHFS="${OUTPUT_DIR}/{{target}}-rootfs.sfs"
     BOOT_TAR="${OUTPUT_DIR}/{{target}}-boot-files.tar"
     CS_STAGING="${OUTPUT_DIR}/{{target}}-cs-staging"
-    trap "rm -rf '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar' '${CS_STAGING}'" EXIT
+    # CS_STAGING is owned by sub-uids; must be removed inside podman unshare.
+    trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'; podman unshare rm -rf '${CS_STAGING}' 2>/dev/null || true" EXIT
     echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
     podman unshare bash -c "
         set -euo pipefail
@@ -112,6 +113,11 @@ iso-sd-boot target:
             -noappend -comp zstd -Xcompression-level \${SFS_LEVEL} -b \${SFS_BLOCK} \
             -processors 4 \
             -e proc -e sys -e dev -e run -e tmp
+
+        # Clean up staging dir inside unshare — vfs files are owned by sub-uids
+        # and cannot be removed by the real user outside the user namespace.
+        rm -rf \"\${CS_STAGING}\"
+
         # Export only boot files needed for ESP assembly
         tar -C \"\$MOUNT\" \
             -cf '${BOOT_TAR}' \
@@ -119,7 +125,6 @@ iso-sd-boot target:
             ./usr/lib/systemd/boot/efi
         podman image umount localhost/{{target}}-installer
     "
-    rm -rf "${CS_STAGING}"
 
     # Run build-iso.sh directly on the host — no container needed.
     # All required tools (xorriso, mkfs.fat, mtools) are present.
