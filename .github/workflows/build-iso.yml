@@ -85,8 +85,8 @@ jobs:
           rclone copyto --log-level INFO --s3-no-check-bucket \
             "$ISO" "R2:${BUCKET}/dakota/dakota-live-latest.iso"
 
-          echo "==> Done. Public URL (if bucket is public):"
-          echo "    https://iso.tunaos.dev/dakota/dakota-live-latest.iso"
+          echo "==> Done. Public URL:"
+          echo "    https://download.tunaos.org/dakota/dakota-live-latest.iso"
 
       - name: Boot verification (UEFI + serial)
         timeout-minutes: 10

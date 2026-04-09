@@ -1,5 +1,0 @@
-# run with --cap-add sys_admin --security-opt label=disable
-
-FROM quay.io/fedora-ostree-desktops/kinoite:43
-
-RUN --mount=type=bind,source=src,target=/src /src/build.sh
