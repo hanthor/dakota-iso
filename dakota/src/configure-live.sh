@@ -155,6 +155,9 @@ gtk-update-icon-cache /usr/share/icons/hicolor/
 mkdir -p /etc/bootc-installer
 cp "$SCRIPT_DIR/etc/bootc-installer/images.json" /etc/bootc-installer/images.json
 cp "$SCRIPT_DIR/etc/bootc-installer/recipe.json" /etc/bootc-installer/recipe.json
+# Flag file read by the installer (tuna-os/tuna-installer#26) to activate live
+# ISO mode even when the installer is running inside a Flatpak sandbox.
+touch /etc/bootc-installer/live-iso-mode
 
 # ── Installer autostart ───────────────────────────────────────────────────────
 # App ID differs between stable and dev channel builds.
@@ -162,14 +165,38 @@ INSTALLER_APP_ID="org.bootcinstaller.Installer"
 [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]] && INSTALLER_APP_ID="org.bootcinstaller.Installer.Devel"
 
 mkdir -p /etc/xdg/autostart
+# VANILLA_CUSTOM_RECIPE workaround (tuna-os/tuna-installer#26): inside the
+# Flatpak sandbox /etc is reserved; the host /etc is at /run/host/etc.  Pass
+# the recipe via env var at the /run/host path so the installer finds it.
 cat > /etc/xdg/autostart/tuna-installer.desktop << DTEOF
 [Desktop Entry]
 Name=Dakota Installer
-Exec=flatpak run ${INSTALLER_APP_ID}
+Exec=flatpak run --env=VANILLA_CUSTOM_RECIPE=/run/host/etc/bootc-installer/recipe.json ${INSTALLER_APP_ID}
 Icon=/usr/share/pixmaps/dakota.png
 Type=Application
 X-GNOME-Autostart-enabled=true
 DTEOF
+
+# ── Polkit rules for live installer (tuna-os/tuna-installer#25) ───────────────
+# The installer's polkit action (org.tunaos.Installer.install) defaults to
+# auth_admin, which blocks installation because liveuser is not an admin.
+# Also, the Flatpak does not export its polkit policy file or the fisherman
+# binary to the host, so we set those up here as a workaround.
+INSTALLER_APP_DIR=$(find /var/lib/flatpak/app/${INSTALLER_APP_ID} -maxdepth 5 -name fisherman -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null || true)
+if [ -n "$INSTALLER_APP_DIR" ]; then
+    ln -sf "${INSTALLER_APP_DIR}/fisherman" /usr/local/bin/fisherman
+    POLICY_FILE=$(find /var/lib/flatpak/app/${INSTALLER_APP_ID} -name 'org.bootcinstaller.Installer.policy' 2>/dev/null | head -1)
+    [ -n "$POLICY_FILE" ] && install -Dm644 "$POLICY_FILE" /usr/share/polkit-1/actions/org.bootcinstaller.Installer.policy
+fi
+mkdir -p /etc/polkit-1/rules.d
+cat > /etc/polkit-1/rules.d/99-live-installer.rules << 'EOF'
+polkit.addRule(function(action, subject) {
+    if (action.id === "org.tunaos.Installer.install" &&
+            subject.user === "liveuser" && subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+});
+EOF
 
 # Flatpaks are pre-installed in a separate cached layer (install-flatpaks.sh).
 # Nothing to do here.
