@@ -54,14 +54,15 @@ flatpak override --system --filesystem=/etc:ro "${INSTALLER_APP_ID}"
 
 # ── Reconcile Flathub apps against the wanted list ───────────────────────────
 # In debug mode, skip the full Flathub app list to keep builds fast.
-if [[ "${DEBUG:-0}" == "1" ]]; then
-    echo "DEBUG mode: skipping Flathub app list (installer-only ISO)"
-    # Still save cache for the installer runtime
-    echo "Saving flatpak repo to build cache..."
-    mkdir -p "${FLATPAK_CACHE}"
-    rsync -a --delete /var/lib/flatpak/repo/ "${FLATPAK_CACHE}/repo/"
-    exit 0
-fi
+# NOTE: Disabled to allow debug ISOs with full flatpak suite + SSH access
+# if [[ "${DEBUG:-0}" == "1" ]]; then
+#     echo "DEBUG mode: skipping Flathub app list (installer-only ISO)"
+#     # Still save cache for the installer runtime
+#     echo "Saving flatpak repo to build cache..."
+#     mkdir -p "${FLATPAK_CACHE}"
+#     rsync -a --delete /var/lib/flatpak/repo/ "${FLATPAK_CACHE}/repo/"
+#     exit 0
+# fi
 
 readarray -t WANTED < <(grep -v '^[[:space:]]*#' /tmp/flatpaks-list | grep -v '^[[:space:]]*$')
 
