@@ -138,7 +138,15 @@ UNITEOF
 systemctl enable var-tmp.mount
 
 # ── Dakota icon ───────────────────────────────────────────────────────────────
-install -Dm644 "$SCRIPT_DIR/dakota.png" /usr/share/pixmaps/dakota.png
+# Install icon in hicolor theme hierarchy for desktop integration
+mkdir -p /usr/share/icons/hicolor/{16x16,24x24,32x32,48x48,64x64,128x128,256x256,512x512}/apps
+for size in 16 24 32 48 64 128 256 512; do
+  install -Dm644 "$SCRIPT_DIR/icons/hicolor/${size}x${size}/apps/dakota.png" \
+    "/usr/share/icons/hicolor/${size}x${size}/apps/dakota.png"
+done
+# Symlink 512×512 to pixmaps for compatibility
+install -Dm644 "$SCRIPT_DIR/icons/hicolor/512x512/apps/dakota.png" /usr/share/pixmaps/dakota.png
+gtk-update-icon-cache /usr/share/icons/hicolor/
 
 # ── Installer configuration ───────────────────────────────────────────────────
 # The bootc-installer reads both overrides from /etc/bootc-installer/:
