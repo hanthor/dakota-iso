@@ -105,7 +105,22 @@ mkdir -p /etc/dconf/db/local.d
 cat > /etc/dconf/db/local.d/00-live-iso << 'DCONFEOF'
 [org/gnome/shell]
 welcome-dialog-last-shown-version='999'
+
+[org/gnome/desktop/screensaver]
+lock-enabled=false
+idle-activation-enabled=false
+
+[org/gnome/desktop/session]
+idle-delay=uint32 0
 DCONFEOF
+
+mkdir -p /etc/dconf/db/local.d/locks
+cat > /etc/dconf/db/local.d/locks/live-iso << 'LOCKSEOF'
+/org/gnome/desktop/screensaver/lock-enabled
+/org/gnome/desktop/screensaver/idle-activation-enabled
+/org/gnome/desktop/session/idle-delay
+LOCKSEOF
+
 dconf update
 
 # ── GDM autologin ─────────────────────────────────────────────────────────────
