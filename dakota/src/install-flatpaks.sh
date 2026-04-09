@@ -1,22 +1,31 @@
 #!/usr/bin/bash
 # Pre-install flatpaks into the live squashfs.
 #
-# Runs with --mount=type=cache,target=/var/lib/flatpak so the flatpak ostree
-# repo persists across builds.  Each run reconciles to match /tmp/flatpaks-list:
-#   - installs missing apps
-#   - updates outdated apps (ostree delta, fast)
-#   - removes apps that were dropped from the list
+# Uses --mount=type=cache,target=/var/cache/flatpak-dl to persist the flatpak
+# ostree repo across builds.  On each run the script:
+#   1. Seeds /var/lib/flatpak/repo from the build cache (warm start)
+#   2. Reconciles to match /tmp/flatpaks-list (only deltas downloaded)
+#   3. Saves the repo back to the cache for next build
 #
 # /tmp/flatpaks-list is COPYd by the Containerfile so it's always current.
 # Requires network at build time; CAP_SYS_ADMIN for dbus.
 
 set -exo pipefail
 
+FLATPAK_CACHE="/var/cache/flatpak-dl"
+
 # overlayfs inside Podman builds doesn't support O_TMPFILE; /dev/shm does.
 export TMPDIR=/dev/shm
 mkdir -p /run/dbus
 dbus-daemon --system --fork --nopidfile
 sleep 1
+
+# ── Seed flatpak repo from build cache (warm start) ──────────────────────────
+if [ -d "${FLATPAK_CACHE}/repo/refs" ]; then
+    echo "Seeding flatpak repo from build cache..."
+    rsync -a --ignore-existing "${FLATPAK_CACHE}/repo/" /var/lib/flatpak/repo/ || true
+    echo "Cache seed complete"
+fi
 
 flatpak remote-add --system --if-not-exists flathub \
     https://dl.flathub.org/repo/flathub.flatpakrepo
@@ -47,6 +56,10 @@ flatpak override --system --filesystem=/etc:ro "${INSTALLER_APP_ID}"
 # In debug mode, skip the full Flathub app list to keep builds fast.
 if [[ "${DEBUG:-0}" == "1" ]]; then
     echo "DEBUG mode: skipping Flathub app list (installer-only ISO)"
+    # Still save cache for the installer runtime
+    echo "Saving flatpak repo to build cache..."
+    mkdir -p "${FLATPAK_CACHE}"
+    rsync -a --delete /var/lib/flatpak/repo/ "${FLATPAK_CACHE}/repo/"
     exit 0
 fi
 
@@ -70,3 +83,9 @@ done
 
 # Prune unused runtimes left behind by removals
 flatpak uninstall --system --noninteractive --unused || true
+
+# ── Save flatpak repo to build cache for next build ──────────────────────────
+echo "Saving flatpak repo to build cache..."
+mkdir -p "${FLATPAK_CACHE}"
+rsync -a --delete /var/lib/flatpak/repo/ "${FLATPAK_CACHE}/repo/"
+echo "Cache updated"

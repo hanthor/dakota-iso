@@ -44,17 +44,20 @@ RUN set -ex; \
 # ── Stage 3: Final Dakota live image ─────────────────────────────────────────
 FROM ghcr.io/projectbluefin/dakota:latest
 
-# Set to "1" via: just debug=1 container dakota (or iso-sd-boot dakota)
-# Enables SSH access in the live session for debugging. Never set in production.
-ARG DEBUG=0
-ENV DEBUG=${DEBUG}
-
 # Set to "dev" to pull the tuna-installer dev build (continuous-dev release)
 # instead of the stable continuous build.  Useful for testing PRs on the dev
 # branch before they land in a stable release.
 # Example: just installer_channel=dev iso-sd-boot dakota
 ARG INSTALLER_CHANNEL=stable
 ENV INSTALLER_CHANNEL=${INSTALLER_CHANNEL}
+
+# DEBUG=1 builds a minimal debug ISO (installer only, SSH enabled).
+# Declared before the flatpak layer so install-flatpaks.sh can skip Flathub
+# apps in debug mode.  Switching debug=0↔1 busts the flatpak cache, but
+# debug builds are fast (installer-only) and production builds are cached
+# independently.
+ARG DEBUG=0
+ENV DEBUG=${DEBUG}
 
 # Replace the OCI-mode initramfs with the dmsquash-live initramfs from stage 2
 COPY --from=initramfs-builder /tmp/initramfs.img /tmp/initramfs.img
@@ -68,9 +71,10 @@ RUN kernel=$(ls /usr/lib/modules | sort -V | tail -1) && \
 # new, removes what's been dropped.  Only deltas are downloaded on rebuilds.
 COPY src/flatpaks /tmp/flatpaks-list
 RUN --mount=type=bind,source=src,target=/src \
+    --mount=type=cache,target=/var/cache/flatpak-dl,id=dakota-flatpak \
     /src/install-flatpaks.sh
 
-# ── Live-environment configure layer (always fresh) ──────────────────────────
+# ── Live-environment configure layer ─────────────────────────────────────────
 # COPY all of src/ so any change to config files busts this layer's cache.
 COPY src/ /tmp/src/
 RUN chmod +x /tmp/src/configure-live.sh && /tmp/src/configure-live.sh

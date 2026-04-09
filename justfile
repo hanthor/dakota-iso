@@ -69,8 +69,9 @@ iso-sd-boot target:
     SQUASHFS="${OUTPUT_DIR}/{{target}}-rootfs.sfs"
     BOOT_TAR="${OUTPUT_DIR}/{{target}}-boot-files.tar"
     CS_STAGING="${OUTPUT_DIR}/{{target}}-cs-staging"
-    # CS_STAGING is owned by sub-uids; must be removed inside podman unshare.
-    trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'; podman unshare rm -rf '${CS_STAGING}' 2>/dev/null || true" EXIT
+    SQUASHFS_ROOT="${OUTPUT_DIR}/{{target}}-sfs-root"
+    # CS_STAGING and SQUASHFS_ROOT contain sub-uid owned files; must be removed inside podman unshare.
+    trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'; podman unshare rm -rf '${CS_STAGING}' '${SQUASHFS_ROOT}' 2>/dev/null || true" EXIT
     echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
     podman unshare bash -c "
         set -euo pipefail
@@ -81,6 +82,7 @@ iso-sd-boot target:
         # Two-step skopeo copy decouples source and destination storage configs.
         PAYLOAD_OCI='${OUTPUT_DIR}/{{target}}-payload.oci.tar'
         CS_STAGING='${CS_STAGING}'
+        SQUASHFS_ROOT='${SQUASHFS_ROOT}'
         SQUASHFS_STORAGE=\"\${CS_STAGING}/var/lib/containers/storage\"
         LIVE_RUNROOT=\"\$(mktemp -d '${OUTPUT_DIR}'/live-runroot-XXXXXX)\"
         STORAGE_CONF=\"\$(mktemp '${OUTPUT_DIR}'/live-storage-XXXXXX.conf)\"
@@ -102,21 +104,34 @@ iso-sd-boot target:
         rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
         rm -rf \"\${LIVE_RUNROOT}\"
 
-        # Build squashfs from the live rootfs + containers-storage staging dir.
-        # mksquashfs merges multiple source dirs at root; dedup removes blocks
-        # shared between the live env and the OCI layers (same base image).
+        # mksquashfs adds each source directory as a named subdirectory — it does
+        # NOT union-merge multiple sources into root. To get the VFS storage at
+        # /var/lib/containers/storage/ in the squashfs (not at /dakota-cs-staging/...),
+        # we build a single unified source tree using XFS reflinks (instant, ~zero space).
+        echo 'Building unified squashfs source tree...'
+        mkdir -p \"\${SQUASHFS_ROOT}\"
+        cp -a --reflink=auto \"\${MOUNT}/.\" \"\${SQUASHFS_ROOT}/\" 2>/dev/null || \
+            cp -a \"\${MOUNT}/.\" \"\${SQUASHFS_ROOT}/\"
+        # Merge VFS storage into the correct path within the unified source tree.
+        mkdir -p \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
+        cp -a \"\${CS_STAGING}/var/lib/containers/storage/.\" \
+            \"\${SQUASHFS_ROOT}/var/lib/containers/storage/\"
+        rm -rf \"\${CS_STAGING}\"
+
+        # Build squashfs from the unified source tree.
+        # dedup removes blocks shared between live rootfs and OCI layers (same base image).
         # -processors 4: caps parallelism to avoid OOM (32 workers exhausts RAM).
         # Compression preset: fast=zstd/3/128K (quick), release=zstd/15/1M (~20% smaller)
         SFS_LEVEL=3; SFS_BLOCK=131072
         [[ '{{compression}}' == 'release' ]] && { SFS_LEVEL=15; SFS_BLOCK=1048576; }
-        mksquashfs \"\$MOUNT\" \"\${CS_STAGING}\" '${SQUASHFS}' \
+        mksquashfs \"\${SQUASHFS_ROOT}\" '${SQUASHFS}' \
             -noappend -comp zstd -Xcompression-level \${SFS_LEVEL} -b \${SFS_BLOCK} \
             -processors 4 \
             -e proc -e sys -e dev -e run -e tmp
 
-        # Clean up staging dir inside unshare — vfs files are owned by sub-uids
+        # Clean up staging dirs inside unshare — vfs files are owned by sub-uids
         # and cannot be removed by the real user outside the user namespace.
-        rm -rf \"\${CS_STAGING}\"
+        rm -rf \"\${SQUASHFS_ROOT}\"
 
         # Export only boot files needed for ESP assembly
         tar -C \"\$MOUNT\" \
@@ -305,3 +320,102 @@ boot-iso-serial target:
         -serial mon:stdio \
         -display none \
         -no-reboot
+
+# Boot a built ISO in libvirt with UEFI, a target install disk, and SSH via
+# the default libvirt network.  Prints the SSH command once the guest gets a
+# DHCP lease.
+#
+# Requires: libvirt, virt-install, OVMF firmware
+# Cleanup: sudo virsh destroy dakota-debug && sudo virsh undefine dakota-debug --nvram
+boot-libvirt-debug target:
+    #!/usr/bin/bash
+    set -euo pipefail
+
+    VM_NAME="dakota-debug"
+    VM_RAM=12288
+    VM_CPUS=4
+    DISK_SIZE=64
+
+    ISO=$(ls \
+        {{output_dir}}/{{target}}-live.iso \
+        output/bootiso/install.iso \
+        output/bootc-{{target}}*.iso \
+        2>/dev/null | head -1 || true)
+    if [[ -z "$ISO" ]]; then
+        echo "No ISO found for '{{target}}' — run: just debug=1 iso-sd-boot {{target}}" >&2
+        exit 1
+    fi
+
+    # Locate OVMF firmware
+    OVMF_CODE=""
+    for f in \
+        /usr/share/OVMF/OVMF_CODE.fd \
+        /usr/share/edk2/ovmf/OVMF_CODE.fd \
+        /usr/share/edk2-ovmf/x64/OVMF_CODE.fd \
+        /usr/share/ovmf/OVMF.fd; do
+        [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
+    done
+    OVMF_VARS=""
+    for f in \
+        /usr/share/OVMF/OVMF_VARS.fd \
+        /usr/share/edk2/ovmf/OVMF_VARS.fd \
+        /usr/share/edk2-ovmf/x64/OVMF_VARS.fd; do
+        [[ -f "$f" ]] && { OVMF_VARS="$f"; break; }
+    done
+    if [[ -z "$OVMF_CODE" ]]; then
+        echo "OVMF firmware not found — install edk2-ovmf or ovmf" >&2
+        exit 1
+    fi
+
+    # Tear down any previous instance
+    sudo virsh destroy  "$VM_NAME" 2>/dev/null || true
+    sudo virsh undefine "$VM_NAME" --nvram 2>/dev/null || true
+
+    # Copy ISO to libvirt images pool
+    sudo cp "$ISO" /var/lib/libvirt/images/${VM_NAME}.iso
+
+    echo "Creating libvirt VM: ${VM_NAME} (${VM_RAM}M RAM, ${VM_CPUS} vCPUs, ${DISK_SIZE}G disk)"
+    sudo virt-install \
+        --name "$VM_NAME" \
+        --memory "$VM_RAM" --vcpus "$VM_CPUS" \
+        --boot loader="${OVMF_CODE}",loader.readonly=yes,loader.type=pflash,nvram.template="${OVMF_VARS}" \
+        --cdrom /var/lib/libvirt/images/${VM_NAME}.iso \
+        --disk size=${DISK_SIZE},format=qcow2 \
+        --network network=default \
+        --graphics vnc,listen=127.0.0.1 \
+        --os-variant generic \
+        --tpm none \
+        --noautoconsole
+
+    MAC=$(sudo virsh domiflist "$VM_NAME" | awk '/network/{print $5}')
+    echo "VM started. MAC: ${MAC}"
+    echo "Waiting for DHCP lease (this takes 30-90s while the ISO boots)..."
+
+    GUEST_IP=""
+    for i in $(seq 1 60); do
+        GUEST_IP=$(sudo virsh net-dhcp-leases default 2>/dev/null \
+            | awk -v mac="$MAC" '$3 == mac {split($5, a, "/"); print a[1]}' \
+            | head -1)
+        if [[ -n "$GUEST_IP" ]]; then
+            break
+        fi
+        sleep 3
+    done
+
+    if [[ -z "$GUEST_IP" ]]; then
+        echo "WARNING: No DHCP lease found after 3 minutes." >&2
+        echo "Try: sudo virsh net-dhcp-leases default" >&2
+        echo "Or:  sudo virsh console ${VM_NAME}" >&2
+        exit 1
+    fi
+
+    echo ""
+    echo "========================================"
+    echo " SSH ready:"
+    echo "   ssh liveuser@${GUEST_IP}"
+    echo "   password: live"
+    echo "========================================"
+    echo ""
+    echo "VNC: $(sudo virsh domdisplay ${VM_NAME} 2>/dev/null || echo 'unavailable')"
+    echo "Serial: sudo virsh console ${VM_NAME}"
+    echo "Cleanup: sudo virsh destroy ${VM_NAME} && sudo virsh undefine ${VM_NAME} --nvram"

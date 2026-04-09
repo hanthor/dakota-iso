@@ -129,6 +129,7 @@ echo ">>> Assembling ISO..."
 # catalog structure issues from -as mkisofs -eltorito-alt-boot (which creates
 # an alternate section without a primary entry, confusing some UEFI firmware).
 # -boot_image any platform_id=0xef creates a proper EFI primary boot section.
+rm -f "${OUTPUT_ISO}"
 touch "${OUTPUT_ISO}"
 xorriso \
     -dev "stdio:${OUTPUT_ISO}" \

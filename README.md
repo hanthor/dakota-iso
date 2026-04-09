@@ -83,11 +83,36 @@ qemu-system-x86_64 \
 
 ### In libvirt / virt-manager
 
+The recommended way to test debug ISOs with SSH access:
+
 ```bash
-# Copy ISO to libvirt images pool
+# Build a debug ISO first (enables SSH: user=liveuser, pass=live)
+just debug=1 output_dir=output iso-sd-boot dakota
+
+# Launch in libvirt — waits for DHCP lease and prints the SSH command
+just boot-libvirt-debug dakota
+```
+
+The recipe creates an 8 GiB RAM VM with a 64 GiB install disk on the default libvirt network. Once the guest boots, it prints:
+
+```
+========================================
+ SSH ready:
+   ssh liveuser@192.168.122.x
+   password: live
+========================================
+```
+
+**Cleanup:**
+```bash
+sudo virsh destroy dakota-debug && sudo virsh undefine dakota-debug --nvram
+```
+
+For production ISOs (without SSH), use the manual virt-install approach:
+
+```bash
 sudo cp output/dakota-live.iso /var/lib/libvirt/images/dakota-live.iso
 
-# Create a VM with UEFI firmware (TPM disabled — swtpm not required)
 sudo virt-install \
   --name dakota-live \
   --memory 4096 --vcpus 4 \
@@ -99,7 +124,6 @@ sudo virt-install \
   --tpm none \
   --noautoconsole
 
-# Get the VNC port and connect
 virsh domdisplay dakota-live
 # Connect to vnc://127.0.0.1:0  (port 5900)
 ```

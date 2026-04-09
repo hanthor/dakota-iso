@@ -63,6 +63,33 @@ SSHEOF
   <service name="dhcpv6-client"/>
 </zone>
 FWEOF
+
+    # Print SSH connection info to the serial console once the network is up.
+    # This makes it trivial to find the guest IP from `virsh console` or raw
+    # QEMU serial output without manual guesswork.
+    cat > /usr/lib/systemd/system/debug-ssh-banner.service << 'BANNEREOF'
+[Unit]
+Description=Print SSH connection info to serial console
+After=sshd.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c '\
+  IP=$(hostname -I | awk "{print \\$1}"); \
+  echo ""; \
+  echo "========================================"; \
+  echo " DEBUG SSH READY"; \
+  echo " ssh liveuser@${IP:-<no-ip>}"; \
+  echo " password: live"; \
+  echo "========================================"; \
+  echo ""'
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target
+BANNEREOF
+    systemctl enable debug-ssh-banner.service
 fi
 
 # Skip gnome-initial-setup in the live session so GNOME Shell starts directly
@@ -92,6 +119,9 @@ GDMEOF
 # ── /var/tmp tmpfs ────────────────────────────────────────────────────────────
 # The live overlayfs puts /var on a small RAM overlay.  bootc needs substantial
 # space in /var/tmp when staging an install; mount a dedicated tmpfs there.
+# Using size=8G instead of size=50%: on VMs with less RAM the kernel silently
+# caps to available memory, but this avoids the 2 GiB ceiling that a 4 GiB VM
+# gets with 50%.  On real hardware with 16+ GiB RAM it's a non-issue.
 cat > /usr/lib/systemd/system/var-tmp.mount << 'UNITEOF'
 [Unit]
 Description=Large tmpfs for /var/tmp in the live environment
@@ -100,7 +130,7 @@ Description=Large tmpfs for /var/tmp in the live environment
 What=tmpfs
 Where=/var/tmp
 Type=tmpfs
-Options=size=50%,nr_inodes=1m
+Options=size=8G,nr_inodes=1m
 
 [Install]
 WantedBy=local-fs.target
@@ -142,3 +172,15 @@ DTEOF
 # create it at first boot instead.
 mkdir -p /usr/lib/tmpfiles.d
 echo 'f /etc/hostname 0644 - - - dakota-live' > /usr/lib/tmpfiles.d/live-hostname.conf
+
+# ── VFS containers-storage ────────────────────────────────────────────────────
+# The ISO embeds the Dakota OCI image as VFS containers-storage in the squashfs.
+# Configure podman to use the VFS driver so the pre-embedded image is visible
+# for offline installation.  Without this, podman initializes with the overlay
+# driver at first boot, creating a db.sql that conflicts with VFS access.
+cat > /etc/containers/storage.conf << 'STOREOF'
+[storage]
+driver = "vfs"
+runroot = "/run/containers/storage"
+graphroot = "/var/lib/containers/storage"
+STOREOF
