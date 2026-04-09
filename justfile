@@ -363,7 +363,7 @@ boot-libvirt-debug target:
     set -euo pipefail
 
     VM_NAME="dakota-debug"
-    VM_RAM=12288
+    VM_RAM=8192
     VM_CPUS=4
     DISK_SIZE=64
 
