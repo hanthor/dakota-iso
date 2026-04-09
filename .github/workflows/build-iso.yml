@@ -53,7 +53,7 @@ jobs:
 
       - name: Build Live ISO
         run: |
-          sudo just output_dir=output iso-sd-boot dakota
+          sudo just installer_channel=dev output_dir=output iso-sd-boot dakota
 
       - name: Compute ISO name
         id: iso
