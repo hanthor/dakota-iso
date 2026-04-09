@@ -376,25 +376,35 @@ boot-libvirt-debug target:
         exit 1
     fi
 
-    # Tear down any previous instance
-    sudo virsh destroy  "$VM_NAME" 2>/dev/null || true
-    sudo virsh undefine "$VM_NAME" --nvram 2>/dev/null || true
-
     # Copy ISO to libvirt images pool
     sudo cp "$ISO" /var/lib/libvirt/images/${VM_NAME}.iso
 
-    echo "Creating libvirt VM: ${VM_NAME} (${VM_RAM}M RAM, ${VM_CPUS} vCPUs, ${DISK_SIZE}G disk)"
-    sudo virt-install \
-        --name "$VM_NAME" \
-        --memory "$VM_RAM" --vcpus "$VM_CPUS" \
-        --boot loader="${OVMF_CODE}",loader.readonly=yes,loader.type=pflash,nvram.template="${OVMF_VARS}" \
-        --cdrom /var/lib/libvirt/images/${VM_NAME}.iso \
-        --disk size=${DISK_SIZE},format=qcow2 \
-        --network network=default \
-        --graphics vnc,listen=127.0.0.1 \
-        --os-variant generic \
-        --tpm none \
-        --noautoconsole
+    if sudo virsh dominfo "$VM_NAME" &>/dev/null; then
+        echo "VM '${VM_NAME}' already exists — swapping ISO and rebooting..."
+        sudo virsh destroy "$VM_NAME" 2>/dev/null || true
+        CDROM_DEV=$(sudo virsh domblklist "$VM_NAME" \
+            | awk 'NR>2 && $2 == "-" {print $1; exit}')
+        if [[ -z "$CDROM_DEV" ]]; then
+            CDROM_DEV=$(sudo virsh domblklist "$VM_NAME" \
+                | awk 'NR>2 && ($2 ~ /\.iso$/) {print $1; exit}')
+        fi
+        sudo virsh change-media "$VM_NAME" "$CDROM_DEV" \
+            /var/lib/libvirt/images/${VM_NAME}.iso --force
+        sudo virsh start "$VM_NAME"
+    else
+        echo "Creating libvirt VM: ${VM_NAME} (${VM_RAM}M RAM, ${VM_CPUS} vCPUs, ${DISK_SIZE}G disk)"
+        sudo virt-install \
+            --name "$VM_NAME" \
+            --memory "$VM_RAM" --vcpus "$VM_CPUS" \
+            --boot loader="${OVMF_CODE}",loader.readonly=yes,loader.type=pflash,nvram.template="${OVMF_VARS}" \
+            --cdrom /var/lib/libvirt/images/${VM_NAME}.iso \
+            --disk size=${DISK_SIZE},format=qcow2 \
+            --network network=default \
+            --graphics vnc,listen=127.0.0.1 \
+            --os-variant generic \
+            --tpm none \
+            --noautoconsole
+    fi
 
     MAC=$(sudo virsh domiflist "$VM_NAME" | awk '/network/{print $5}')
     echo "VM started. MAC: ${MAC}"
