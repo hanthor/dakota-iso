@@ -182,7 +182,7 @@ DTEOF
 # auth_admin, which blocks installation because liveuser is not an admin.
 # Also, the Flatpak does not export its polkit policy file or the fisherman
 # binary to the host, so we set those up here as a workaround.
-INSTALLER_APP_DIR=$(find /var/lib/flatpak/app/${INSTALLER_APP_ID} -maxdepth 5 -name fisherman -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null || true)
+INSTALLER_APP_DIR=$(find /var/lib/flatpak/app/${INSTALLER_APP_ID} -name fisherman -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null || true)
 if [ -n "$INSTALLER_APP_DIR" ]; then
     ln -sf "${INSTALLER_APP_DIR}/fisherman" /usr/local/bin/fisherman
     POLICY_FILE=$(find /var/lib/flatpak/app/${INSTALLER_APP_ID} -name 'org.bootcinstaller.Installer.policy' 2>/dev/null | head -1)
