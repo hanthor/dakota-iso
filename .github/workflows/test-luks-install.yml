@@ -1,4 +1,5 @@
 name: LUKS Install End-to-End Test
+# Spike branch (projectbluefin/utah#1406): dakota/ points at dakota:testing.
 
 # Test a full LUKS-encrypted installation via fisherman and verify the
 # installed system can unlock and boot.  Mirrors the local just recipes:
