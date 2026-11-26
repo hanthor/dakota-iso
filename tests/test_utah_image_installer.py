@@ -294,7 +294,7 @@ class NonBlockingTrackTests(unittest.TestCase):
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
     def test_the_track_is_manual_or_on_its_own_changes(self):
-        self.assertEqual(set(self.workflow[True]), {"workflow_dispatch", "pull_request"})
+        self.assertEqual(set(self.workflow[True]), {"workflow_dispatch", "workflow_call", "pull_request"})
 
     def test_the_track_has_no_write_permission(self):
         self.assertEqual(self.workflow["permissions"], {})
@@ -427,6 +427,15 @@ class ComposefsTests(unittest.TestCase):
         e2e = steps["End-to-end with screenshots"]
         self.assertIn('--backend "$MEDIUM_BACKEND"', e2e)
         self.assertIn('--backend-decision "$WORK/raw-evidence/backend.json"', e2e)
+
+    def test_the_live_initramfs_is_the_booted_kernels(self):
+        # Gaming images carry a second module tree that sorts above the OGC
+        # kernel's; rebuilding that one left the booted initrd without the
+        # live overlay (run 45729186820: "serial never showed UTAH_LIVE_READY").
+        containerfile = (RAW / "Containerfile").read_text()
+        self.assertNotIn("ls /usr/lib/modules | sort -V | tail -1", containerfile)
+        self.assertIn("-name vmlinuz", containerfile)
+        self.assertIn('kver="${kernel_dirs##*/}"', containerfile)
 
     def test_the_live_overlay_sits_under_both_root_setups(self):
         units = RAW / "src/usr/lib/systemd/system"
